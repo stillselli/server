@@ -3,7 +3,7 @@ import { TwitterApi } from "twitter-api-v2";
 
 const app = express();
 
-// Twitter Client mit OAuth 1.0a / User Context
+// Twitter Client mit OAuth 1.0a User Context
 const client = new TwitterApi({
   appKey: process.env.CONSUMER_KEY,
   appSecret: process.env.CONSUMER_SECRET,
@@ -11,7 +11,7 @@ const client = new TwitterApi({
   accessSecret: process.env.ACCESS_SECRET
 });
 
-// ⭐ Likes abrufen
+// Likes abrufen
 app.get("/likes/:id", async (req, res) => {
   const id = req.params.id;
   try {
@@ -22,7 +22,7 @@ app.get("/likes/:id", async (req, res) => {
   }
 });
 
-// 🔁 Retweets abrufen
+// Retweets abrufen
 app.get("/retweets/:id", async (req, res) => {
   const id = req.params.id;
   try {
@@ -33,13 +33,12 @@ app.get("/retweets/:id", async (req, res) => {
   }
 });
 
-// 💬 Replies abrufen
+// Replies abrufen (öffentliche Tweets)
 app.get("/replies/:id", async (req, res) => {
   const id = req.params.id;
   try {
-    // Native fetch von Node.js
-    const bearer = process.env.TWITTER_BEARER; // falls du App-only für Search nutzt
     const url = `https://api.twitter.com/2/tweets/search/recent?query=conversation_id:${id}&tweet.fields=author_id`;
+    const bearer = process.env.ACCESS_TOKEN;
     const response = await fetch(url, { headers: { "Authorization": `Bearer ${bearer}` } });
     const data = await response.json();
     res.json(data);
