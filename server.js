@@ -1,6 +1,5 @@
 import express from "express";
 import { TwitterApi } from "twitter-api-v2";
-import 'dotenv/config'; // lädt die .env Datei lokal (optional, falls du dotenv nutzt)
 
 const app = express();
 
