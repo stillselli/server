@@ -1,8 +1,10 @@
 import express from "express";
 import { TwitterApi } from "twitter-api-v2";
+import 'dotenv/config'; // lädt die .env Datei lokal (optional, falls du dotenv nutzt)
 
 const app = express();
 
+// ⚡ Twitter Client mit OAuth 1.0a User Context
 const client = new TwitterApi({
   appKey: process.env.CONSUMER_KEY,
   appSecret: process.env.CONSUMER_SECRET,
@@ -12,12 +14,21 @@ const client = new TwitterApi({
 
 const twitter = client.v2;
 
-// ⭐ Kombinierter Endpoint, gibt nur Usernames zurück
-// Beispiel: /participants/:id?include=likes,retweets
+// 🔹 Test-Endpoint: Prüft Environment Variables
+app.get("/test-env", (req, res) => {
+  res.json({
+    CONSUMER_KEY: process.env.CONSUMER_KEY || null,
+    CONSUMER_SECRET: process.env.CONSUMER_SECRET || null,
+    ACCESS_TOKEN: process.env.ACCESS_TOKEN || null,
+    ACCESS_SECRET: process.env.ACCESS_SECRET || null
+  });
+});
+
+// 🔹 Kombinierter Endpoint für Teilnehmer
+// /participants/:id?include=likes,retweets,replies
 app.get("/participants/:id", async (req, res) => {
   const tweetId = req.params.id;
   const include = (req.query.include || "likes,retweets,replies").split(",");
-
   const response = {};
 
   try {
@@ -31,7 +42,6 @@ app.get("/participants/:id", async (req, res) => {
         list = list.concat(nextPage.data || []);
         next = nextPage.meta?.next_token;
       }
-      // Nur Usernames extrahieren
       response.likes = list.map(u => u.username);
     }
 
@@ -72,7 +82,6 @@ app.get("/participants/:id", async (req, res) => {
         next = nextPage.meta?.next_token;
       }
 
-      // Map author_id auf username
       const userMap = {};
       users.forEach(u => userMap[u.id] = u.username);
       response.replies = list.map(t => userMap[t.author_id]).filter(Boolean);
@@ -81,9 +90,11 @@ app.get("/participants/:id", async (req, res) => {
     res.json(response);
 
   } catch (err) {
+    console.error("Error in /participants/:id:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// 🔹 Start Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Backend läuft auf Port ${PORT}`));
