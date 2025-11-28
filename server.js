@@ -31,13 +31,18 @@ app.get("/participants/:id", async (req, res) => {
   const response = {};
 
   try {
+    // Funktion für kurze Pause (Rate Limit schonen)
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
     // 💬 Likes
     if (include.includes("likes")) {
-      const data = await twitter.tweetLikedBy(tweetId, { max_results: 100 });
+      const data = await twitter.tweetLikedBy(tweetId, { max_results: 20 });
       let list = data.data || [];
       let next = data.meta?.next_token;
+
       while (next) {
-        const nextPage = await twitter.tweetLikedBy(tweetId, { max_results: 100, pagination_token: next });
+        await wait(500);
+        const nextPage = await twitter.tweetLikedBy(tweetId, { max_results: 20, pagination_token: next });
         list = list.concat(nextPage.data || []);
         next = nextPage.meta?.next_token;
       }
@@ -46,11 +51,13 @@ app.get("/participants/:id", async (req, res) => {
 
     // 🔁 Retweets
     if (include.includes("retweets")) {
-      const data = await twitter.tweetRetweetedBy(tweetId, { max_results: 100 });
+      const data = await twitter.tweetRetweetedBy(tweetId, { max_results: 20 });
       let list = data.data || [];
       let next = data.meta?.next_token;
+
       while (next) {
-        const nextPage = await twitter.tweetRetweetedBy(tweetId, { max_results: 100, pagination_token: next });
+        await wait(500);
+        const nextPage = await twitter.tweetRetweetedBy(tweetId, { max_results: 20, pagination_token: next });
         list = list.concat(nextPage.data || []);
         next = nextPage.meta?.next_token;
       }
@@ -62,7 +69,7 @@ app.get("/participants/:id", async (req, res) => {
       const data = await twitter.search(`conversation_id:${tweetId}`, {
         "tweet.fields": ["author_id", "created_at"],
         expansions: ["author_id"],
-        max_results: 100
+        max_results: 20
       });
 
       let list = data.data || [];
@@ -70,10 +77,11 @@ app.get("/participants/:id", async (req, res) => {
       let next = data.meta?.next_token;
 
       while (next) {
+        await wait(500);
         const nextPage = await twitter.search(`conversation_id:${tweetId}`, {
           "tweet.fields": ["author_id", "created_at"],
           expansions: ["author_id"],
-          max_results: 100,
+          max_results: 20,
           next_token: next
         });
         list = list.concat(nextPage.data || []);
