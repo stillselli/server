@@ -1,52 +1,51 @@
 import express from "express";
-import fetch from "node-fetch";
+import { TwitterApi } from "twitter-api-v2";
 
 const app = express();
 
-const TWITTER = {
-  base: "https://api.twitter.com/2/tweets/",
-  headers: () => ({
-    "Authorization": `Bearer ${process.env.TWITTER_BEARER}`,
-    "Content-Type": "application/json"
-  })
-};
+// Twitter Client mit OAuth 1.0a / User Context
+const client = new TwitterApi({
+  appKey: process.env.CONSUMER_KEY,
+  appSecret: process.env.CONSUMER_SECRET,
+  accessToken: process.env.ACCESS_TOKEN,
+  accessSecret: process.env.ACCESS_SECRET
+});
 
-// ⭐ 1. Likes abrufen
+// ⭐ Likes abrufen
 app.get("/likes/:id", async (req, res) => {
   const id = req.params.id;
-
-  const response = await fetch(
-    `${TWITTER.base}${id}/liking_users`,
-    { headers: TWITTER.headers() }
-  );
-
-  res.json(await response.json());
+  try {
+    const likes = await client.v2.tweetLikedBy(id);
+    res.json(likes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 🔁 2. Retweets abrufen
+// 🔁 Retweets abrufen
 app.get("/retweets/:id", async (req, res) => {
   const id = req.params.id;
-
-  const response = await fetch(
-    `${TWITTER.base}${id}/retweeted_by`,
-    { headers: TWITTER.headers() }
-  );
-
-  res.json(await response.json());
+  try {
+    const retweets = await client.v2.tweetRetweetedBy(id);
+    res.json(retweets);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 💬 3. Replies abrufen
-// Wichtig: conversation_id sucht ALLE Tweets, die als Antwort auf den ursprünglichen Thread gelten
+// 💬 Replies abrufen
 app.get("/replies/:id", async (req, res) => {
   const id = req.params.id;
-
-  const response = await fetch(
-    `https://api.twitter.com/2/tweets/search/recent?query=conversation_id:${id}&tweet.fields=author_id`,
-    { headers: TWITTER.headers() }
-  );
-
-  res.json(await response.json());
+  try {
+    // Native fetch von Node.js
+    const bearer = process.env.TWITTER_BEARER; // falls du App-only für Search nutzt
+    const url = `https://api.twitter.com/2/tweets/search/recent?query=conversation_id:${id}&tweet.fields=author_id`;
+    const response = await fetch(url, { headers: { "Authorization": `Bearer ${bearer}` } });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.listen(3000, () => console.log("Server läuft auf Port 3000"));
-
