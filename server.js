@@ -12,74 +12,74 @@ const client = new TwitterApi({
 
 const twitter = client.v2;
 
-// ⭐ GET ALL LIKES
-app.get("/likes/:id", async (req, res) => {
+// ⭐ Kombinierter Endpoint, gibt nur Usernames zurück
+// Beispiel: /participants/:id?include=likes,retweets
+app.get("/participants/:id", async (req, res) => {
+  const tweetId = req.params.id;
+  const include = (req.query.include || "likes,retweets,replies").split(",");
+
+  const response = {};
+
   try {
-    const data = await twitter.tweetLikedBy(req.params.id, { max_results: 100 });
-
-    let list = data.data || [];
-    let next = data.meta?.next_token;
-
-    while (next) {
-      const nextPage = await twitter.tweetLikedBy(req.params.id, {
-        max_results: 100,
-        pagination_token: next
-      });
-      list = list.concat(nextPage.data || []);
-      next = nextPage.meta?.next_token;
+    // 💬 Likes
+    if (include.includes("likes")) {
+      const data = await twitter.tweetLikedBy(tweetId, { max_results: 100 });
+      let list = data.data || [];
+      let next = data.meta?.next_token;
+      while (next) {
+        const nextPage = await twitter.tweetLikedBy(tweetId, { max_results: 100, pagination_token: next });
+        list = list.concat(nextPage.data || []);
+        next = nextPage.meta?.next_token;
+      }
+      // Nur Usernames extrahieren
+      response.likes = list.map(u => u.username);
     }
 
-    res.json(list);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 🔁 GET ALL RETWEETS
-app.get("/retweets/:id", async (req, res) => {
-  try {
-    const data = await twitter.tweetRetweetedBy(req.params.id, { max_results: 100 });
-
-    let list = data.data || [];
-    let next = data.meta?.next_token;
-
-    while (next) {
-      const nextPage = await twitter.tweetRetweetedBy(req.params.id, {
-        max_results: 100,
-        pagination_token: next
-      });
-      list = list.concat(nextPage.data || []);
-      next = nextPage.meta?.next_token;
+    // 🔁 Retweets
+    if (include.includes("retweets")) {
+      const data = await twitter.tweetRetweetedBy(tweetId, { max_results: 100 });
+      let list = data.data || [];
+      let next = data.meta?.next_token;
+      while (next) {
+        const nextPage = await twitter.tweetRetweetedBy(tweetId, { max_results: 100, pagination_token: next });
+        list = list.concat(nextPage.data || []);
+        next = nextPage.meta?.next_token;
+      }
+      response.retweets = list.map(u => u.username);
     }
 
-    res.json(list);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 💬 GET ALL REPLIES
-app.get("/replies/:id", async (req, res) => {
-  try {
-    const data = await twitter.search(`conversation_id:${req.params.id}`, {
-      "tweet.fields": ["author_id", "created_at"],
-      max_results: 100
-    });
-
-    let list = data.data || [];
-    let next = data.meta?.next_token;
-
-    while (next) {
-      const nextPage = await twitter.search(`conversation_id:${req.params.id}`, {
+    // 💬 Replies
+    if (include.includes("replies")) {
+      const data = await twitter.search(`conversation_id:${tweetId}`, {
         "tweet.fields": ["author_id", "created_at"],
-        max_results: 100,
-        next_token: next
+        expansions: ["author_id"],
+        max_results: 100
       });
-      list = list.concat(nextPage.data || []);
-      next = nextPage.meta?.next_token;
+
+      let list = data.data || [];
+      let users = data.includes?.users || [];
+      let next = data.meta?.next_token;
+
+      while (next) {
+        const nextPage = await twitter.search(`conversation_id:${tweetId}`, {
+          "tweet.fields": ["author_id", "created_at"],
+          expansions: ["author_id"],
+          max_results: 100,
+          next_token: next
+        });
+        list = list.concat(nextPage.data || []);
+        users = users.concat(nextPage.includes?.users || []);
+        next = nextPage.meta?.next_token;
+      }
+
+      // Map author_id auf username
+      const userMap = {};
+      users.forEach(u => userMap[u.id] = u.username);
+      response.replies = list.map(t => userMap[t.author_id]).filter(Boolean);
     }
 
-    res.json(list);
+    res.json(response);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
