@@ -40,7 +40,7 @@ app.get("/retweets/:id", async (req, res) => {
   }
 });
 
-// 💬 Replies
+// 💬 Replies (öffentliche Tweets)
 app.get("/replies/:id", async (req, res) => {
   try {
     const replies = [];
@@ -54,47 +54,6 @@ app.get("/replies/:id", async (req, res) => {
     }
 
     res.json(replies);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 🏆 Alle Teilnehmer zusammenführen (Likes + Retweets + Replies)
-app.get("/participants/:id", async (req, res) => {
-  try {
-    const [likes, retweets, replies] = await Promise.all([
-      paginate(client.v2.tweetLikedBy, req.params.id),
-      paginate(client.v2.tweetRetweetedBy, req.params.id),
-      (async () => {
-        const data = [];
-        const search = await client.v2.search(`conversation_id:${req.params.id}`, {
-          "tweet.fields": ["author_id"],
-          max_results: 100
-        });
-        for await (const t of search) data.push(t);
-        return data;
-      })()
-    ]);
-
-    // Nur eindeutige user_id
-    const participants = new Set();
-    likes.forEach(u => participants.add(u.id));
-    retweets.forEach(u => participants.add(u.id));
-    replies.forEach(t => participants.add(t.author_id));
-
-    res.json(Array.from(participants));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 🎲 Zufälliger Gewinner
-app.get("/winner/:id", async (req, res) => {
-  try {
-    const response = await fetch(`https://DEIN-BACKEND.onrender.com/participants/${req.params.id}`);
-    const participants = await response.json();
-    const winner = participants[Math.floor(Math.random() * participants.length)];
-    res.json({ winner });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
