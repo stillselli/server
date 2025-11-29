@@ -3,28 +3,33 @@ import { TwitterApi } from "twitter-api-v2";
 
 const app = express();
 
-// Speicher für Code Verifier – für Demo in Memory, für Produktion besser DB
+// Memory Storage für CodeVerifier und AccessToken
 let codeVerifierMemory = "";
 
-// Twitter Client (nur für Generierung, Access Token kommt später)
+// Tokens aus Environment
+let accessToken = process.env.OAUTH2_ACCESS_TOKEN;
+const refreshToken = process.env.REFRESH_TOKEN;
+
 const client = new TwitterApi({
   clientId: process.env.CLIENT_ID,
-  clientSecret: process.env.CLIENT_SECRET
+  clientSecret: process.env.CLIENT_SECRET,
+  accessToken
 });
 
 const twitter = client.v2;
 
-// 🔹 Test Endpoint: Environment Variables prüfen
+// 🔹 Test-Endpoint
 app.get("/test-env", (req, res) => {
   res.json({
     CLIENT_ID: process.env.CLIENT_ID || null,
     CLIENT_SECRET: process.env.CLIENT_SECRET || null,
-    OAUTH2_ACCESS_TOKEN: process.env.OAUTH2_ACCESS_TOKEN || null,
+    OAUTH2_ACCESS_TOKEN: accessToken || null,
+    REFRESH_TOKEN: refreshToken || null,
     PORT: process.env.PORT || null
   });
 });
 
-// 🔹 Login Endpoint – startet OAuth Flow
+// 🔹 Login-Endpoint für OAuth Flow
 app.get("/login", (req, res) => {
   const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
     "https://server-5-ztpe.onrender.com/callback",
@@ -33,16 +38,12 @@ app.get("/login", (req, res) => {
     }
   );
 
-  // Speichern des Code Verifier in Memory
   codeVerifierMemory = codeVerifier;
-
   console.log("💡 CodeVerifier gespeichert:", codeVerifierMemory);
-
-  // Weiterleitung zu Twitter für Autorisierung
   res.redirect(url);
 });
 
-// 🔹 Callback Endpoint – tauscht Code gegen Access Token
+// 🔹 Callback-Endpoint – Token holen
 app.get("/callback", async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send("❌ Kein Code erhalten");
@@ -54,7 +55,8 @@ app.get("/callback", async (req, res) => {
       codeVerifier: codeVerifierMemory
     });
 
-    console.log("🎉 ACCESS TOKEN:", result.accessToken);
+    accessToken = result.accessToken;
+    console.log("🎉 ACCESS TOKEN:", accessToken);
     console.log("♻ REFRESH TOKEN:", result.refreshToken);
 
     res.send("✔ Token erfolgreich erhalten! Schau in die Render Logs.");
@@ -64,24 +66,49 @@ app.get("/callback", async (req, res) => {
   }
 });
 
+// 🔹 Funktion: Access Token automatisch erneuern
+async function refreshAccessToken() {
+  try {
+    if (!refreshToken) throw new Error("Kein REFRESH_TOKEN gesetzt!");
+    const newTokens = await client.refreshOAuth2Token(refreshToken);
+    accessToken = newTokens.accessToken;
+    console.log("♻ Access Token erneuert:", accessToken);
+  } catch (err) {
+    console.error("❌ Fehler beim Token erneuern:", err);
+  }
+}
+
+// 🔹 Helper: Anfrage mit Auto-Refresh
+async function safeRequest(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err.code === 401) { // Token abgelaufen
+      console.log("⚠ Token abgelaufen, erneuere...");
+      await refreshAccessToken();
+      return safeRequest(fn);
+    }
+    throw err;
+  }
+}
+
 // 🔹 Kombinierter Endpoint für Teilnehmer
 app.get("/participants/:id", async (req, res) => {
   const tweetId = req.params.id;
   const include = (req.query.include || "likes,retweets,replies").split(",");
   const response = {};
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   try {
-    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-
     // Likes
     if (include.includes("likes")) {
-      const data = await twitter.tweetLikedBy(tweetId, { max_results: 20 });
+      const data = await safeRequest(() => twitter.tweetLikedBy(tweetId, { max_results: 20 }));
       let list = data.data || [];
       let next = data.meta?.next_token;
 
       while (next) {
         await wait(500);
-        const nextPage = await twitter.tweetLikedBy(tweetId, { max_results: 20, pagination_token: next });
+        const nextPage = await safeRequest(() => twitter.tweetLikedBy(tweetId, { max_results: 20, pagination_token: next }));
         list = list.concat(nextPage.data || []);
         next = nextPage.meta?.next_token;
       }
@@ -90,13 +117,13 @@ app.get("/participants/:id", async (req, res) => {
 
     // Retweets
     if (include.includes("retweets")) {
-      const data = await twitter.tweetRetweetedBy(tweetId, { max_results: 20 });
+      const data = await safeRequest(() => twitter.tweetRetweetedBy(tweetId, { max_results: 20 }));
       let list = data.data || [];
       let next = data.meta?.next_token;
 
       while (next) {
         await wait(500);
-        const nextPage = await twitter.tweetRetweetedBy(tweetId, { max_results: 20, pagination_token: next });
+        const nextPage = await safeRequest(() => twitter.tweetRetweetedBy(tweetId, { max_results: 20, pagination_token: next }));
         list = list.concat(nextPage.data || []);
         next = nextPage.meta?.next_token;
       }
@@ -105,11 +132,11 @@ app.get("/participants/:id", async (req, res) => {
 
     // Replies
     if (include.includes("replies")) {
-      const data = await twitter.search(`conversation_id:${tweetId}`, {
+      const data = await safeRequest(() => twitter.search(`conversation_id:${tweetId}`, {
         "tweet.fields": ["author_id", "created_at"],
         expansions: ["author_id"],
         max_results: 20
-      });
+      }));
 
       let list = data.data || [];
       let users = data.includes?.users || [];
@@ -117,12 +144,12 @@ app.get("/participants/:id", async (req, res) => {
 
       while (next) {
         await wait(500);
-        const nextPage = await twitter.search(`conversation_id:${tweetId}`, {
+        const nextPage = await safeRequest(() => twitter.search(`conversation_id:${tweetId}`, {
           "tweet.fields": ["author_id", "created_at"],
           expansions: ["author_id"],
           max_results: 20,
           next_token: next
-        });
+        }));
         list = list.concat(nextPage.data || []);
         users = users.concat(nextPage.includes?.users || []);
         next = nextPage.meta?.next_token;
