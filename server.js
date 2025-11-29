@@ -32,7 +32,7 @@ app.get("/test-env", (req, res) => {
 // 🔹 Login-Endpoint für OAuth Flow
 app.get("/login", (req, res) => {
   const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
-    "https://server-5-ztpe.onrender.com/callback",
+    "https://server-6-u1j3.onrender.com/callback",
     {
       scope: ["tweet.read", "users.read", "like.read", "offline.access"]
     }
@@ -51,7 +51,7 @@ app.get("/callback", async (req, res) => {
   try {
     const result = await client.loginWithOAuth2({
       code,
-      redirectUri: "https://server-5-ztpe.onrender.com/callback",
+      redirectUri: "https://server-6-u1j3.onrender.com/callback",
       codeVerifier: codeVerifierMemory
     });
 
