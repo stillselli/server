@@ -25,7 +25,7 @@ app.get("/test-env", (req, res) => {
 // 🔹 OAuth Login Endpoint – einmal für Token-Generierung
 app.get("/login", (req, res) => {
   const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
-    "https://DEIN-RENDER-SERVICE.onrender.com/callback",
+    "https://server-5-ztpe.onrender.com/callback",
     {
       scope: ["tweet.read", "users.read", "like.read", "offline.access"]
     }
@@ -43,7 +43,7 @@ app.get("/callback", async (req, res) => {
   try {
     const result = await client.loginWithOAuth2({
       code,
-      redirectUri: "https://DEIN-RENDER-SERVICE.onrender.com/callback"
+      redirectUri: "https://server-5-ztpe.onrender.com/callback"
     });
 
     console.log("🎉 ACCESS TOKEN:", result.accessToken);
