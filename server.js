@@ -3,12 +3,13 @@ import { TwitterApi } from "twitter-api-v2";
 
 const app = express();
 
-// Memory Storage für CodeVerifier und AccessToken
-let codeVerifierMemory = "";
-
-// Tokens aus Environment
+// Access & Refresh Token direkt aus Render Environment Variables
 let accessToken = process.env.OAUTH2_ACCESS_TOKEN;
 const refreshToken = process.env.REFRESH_TOKEN;
+
+if (!process.env.CLIENT_ID || !process.env.CLIENT_SECRET) {
+  console.error("❌ CLIENT_ID oder CLIENT_SECRET fehlen in den Environment Variables!");
+}
 
 const client = new TwitterApi({
   clientId: process.env.CLIENT_ID,
@@ -18,52 +19,15 @@ const client = new TwitterApi({
 
 const twitter = client.v2;
 
-// 🔹 Test-Endpoint
+// 🔹 Test-Endpoint für Environment Variables
 app.get("/test-env", (req, res) => {
   res.json({
-    CLIENT_ID: process.env.CLIENT_ID || null,
-    CLIENT_SECRET: process.env.CLIENT_SECRET || null,
-    OAUTH2_ACCESS_TOKEN: accessToken || null,
-    REFRESH_TOKEN: refreshToken || null,
-    PORT: process.env.PORT || null
+    CLIENT_ID: process.env.CLIENT_ID,
+    CLIENT_SECRET: process.env.CLIENT_SECRET,
+    OAUTH2_ACCESS_TOKEN: accessToken,
+    REFRESH_TOKEN: refreshToken,
+    PORT: process.env.PORT
   });
-});
-
-// 🔹 Login-Endpoint für OAuth Flow
-app.get("/login", (req, res) => {
-  const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
-    "https://server-6-u1j3.onrender.com/callback",
-    {
-      scope: ["tweet.read", "users.read", "like.read", "offline.access"]
-    }
-  );
-
-  codeVerifierMemory = codeVerifier;
-  console.log("💡 CodeVerifier gespeichert:", codeVerifierMemory);
-  res.redirect(url);
-});
-
-// 🔹 Callback-Endpoint – Token holen
-app.get("/callback", async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).send("❌ Kein Code erhalten");
-
-  try {
-    const result = await client.loginWithOAuth2({
-      code,
-      redirectUri: "https://server-6-u1j3.onrender.com/callback",
-      codeVerifier: codeVerifierMemory
-    });
-
-    accessToken = result.accessToken;
-    console.log("🎉 ACCESS TOKEN:", accessToken);
-    console.log("♻ REFRESH TOKEN:", result.refreshToken);
-
-    res.send("✔ Token erfolgreich erhalten! Schau in die Render Logs.");
-  } catch (err) {
-    console.error("❌ Fehler beim Token abrufen:", err);
-    res.status(500).send("❌ Fehler beim Token abrufen. Prüfe Logs.");
-  }
 });
 
 // 🔹 Funktion: Access Token automatisch erneuern
@@ -78,7 +42,7 @@ async function refreshAccessToken() {
   }
 }
 
-// 🔹 Helper: Anfrage mit Auto-Refresh
+// 🔹 Helper-Funktion für Requests mit Auto-Refresh
 async function safeRequest(fn) {
   try {
     return await fn();
@@ -86,13 +50,13 @@ async function safeRequest(fn) {
     if (err.code === 401) { // Token abgelaufen
       console.log("⚠ Token abgelaufen, erneuere...");
       await refreshAccessToken();
-      return safeRequest(fn);
+      return safeRequest(fn); // retry
     }
     throw err;
   }
 }
 
-// 🔹 Kombinierter Endpoint für Teilnehmer
+// 🔹 Kombinierter Endpoint für Teilnehmer (Likes, Retweets, Replies)
 app.get("/participants/:id", async (req, res) => {
   const tweetId = req.params.id;
   const include = (req.query.include || "likes,retweets,replies").split(",");
