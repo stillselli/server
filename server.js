@@ -3,16 +3,18 @@ import { TwitterApi } from "twitter-api-v2";
 
 const app = express();
 
-// ⚡ Twitter Client mit OAuth 2.0 User Context
+// Speicher für Code Verifier – für Demo in Memory, für Produktion besser DB
+let codeVerifierMemory = "";
+
+// Twitter Client (nur für Generierung, Access Token kommt später)
 const client = new TwitterApi({
   clientId: process.env.CLIENT_ID,
-  clientSecret: process.env.CLIENT_SECRET,
-  accessToken: process.env.OAUTH2_ACCESS_TOKEN
+  clientSecret: process.env.CLIENT_SECRET
 });
 
 const twitter = client.v2;
 
-// 🔹 Test-Endpoint: Prüft Environment Variables
+// 🔹 Test Endpoint: Environment Variables prüfen
 app.get("/test-env", (req, res) => {
   res.json({
     CLIENT_ID: process.env.CLIENT_ID || null,
@@ -22,7 +24,7 @@ app.get("/test-env", (req, res) => {
   });
 });
 
-// 🔹 OAuth Login Endpoint – einmal für Token-Generierung
+// 🔹 Login Endpoint – startet OAuth Flow
 app.get("/login", (req, res) => {
   const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
     "https://server-5-ztpe.onrender.com/callback",
@@ -30,12 +32,17 @@ app.get("/login", (req, res) => {
       scope: ["tweet.read", "users.read", "like.read", "offline.access"]
     }
   );
-  // Speichern von codeVerifier/State in DB oder Memory nötig, hier nur Demo
-  console.log("💡 CodeVerifier:", codeVerifier, "State:", state);
+
+  // Speichern des Code Verifier in Memory
+  codeVerifierMemory = codeVerifier;
+
+  console.log("💡 CodeVerifier gespeichert:", codeVerifierMemory);
+
+  // Weiterleitung zu Twitter für Autorisierung
   res.redirect(url);
 });
 
-// 🔹 OAuth Callback Endpoint – Token abholen
+// 🔹 Callback Endpoint – tauscht Code gegen Access Token
 app.get("/callback", async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send("❌ Kein Code erhalten");
@@ -43,21 +50,21 @@ app.get("/callback", async (req, res) => {
   try {
     const result = await client.loginWithOAuth2({
       code,
-      redirectUri: "https://server-5-ztpe.onrender.com/callback"
+      redirectUri: "https://server-5-ztpe.onrender.com/callback",
+      codeVerifier: codeVerifierMemory
     });
 
     console.log("🎉 ACCESS TOKEN:", result.accessToken);
     console.log("♻ REFRESH TOKEN:", result.refreshToken);
 
-    res.send("✔ Token erhalten! Schau in die Render Logs.");
+    res.send("✔ Token erfolgreich erhalten! Schau in die Render Logs.");
   } catch (err) {
-    console.error("Fehler beim OAuth Callback:", err);
-    res.status(500).send("❌ Fehler beim Token abrufen");
+    console.error("❌ Fehler beim Token abrufen:", err);
+    res.status(500).send("❌ Fehler beim Token abrufen. Prüfe Logs.");
   }
 });
 
 // 🔹 Kombinierter Endpoint für Teilnehmer
-// /participants/:id?include=likes,retweets,replies
 app.get("/participants/:id", async (req, res) => {
   const tweetId = req.params.id;
   const include = (req.query.include || "likes,retweets,replies").split(",");
@@ -66,7 +73,7 @@ app.get("/participants/:id", async (req, res) => {
   try {
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-    // 💬 Likes
+    // Likes
     if (include.includes("likes")) {
       const data = await twitter.tweetLikedBy(tweetId, { max_results: 20 });
       let list = data.data || [];
@@ -81,7 +88,7 @@ app.get("/participants/:id", async (req, res) => {
       response.likes = list.map(u => u.username);
     }
 
-    // 🔁 Retweets
+    // Retweets
     if (include.includes("retweets")) {
       const data = await twitter.tweetRetweetedBy(tweetId, { max_results: 20 });
       let list = data.data || [];
@@ -96,7 +103,7 @@ app.get("/participants/:id", async (req, res) => {
       response.retweets = list.map(u => u.username);
     }
 
-    // 💬 Replies
+    // Replies
     if (include.includes("replies")) {
       const data = await twitter.search(`conversation_id:${tweetId}`, {
         "tweet.fields": ["author_id", "created_at"],
