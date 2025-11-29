@@ -3,13 +3,8 @@ import { TwitterApi } from "twitter-api-v2";
 
 const app = express();
 
-// Access & Refresh Token direkt aus Render Environment Variables
-let accessToken = process.env.OAUTH2_ACCESS_TOKEN;
-const refreshToken = process.env.REFRESH_TOKEN;
-
-if (!process.env.CLIENT_ID || !process.env.CLIENT_SECRET) {
-  console.error("❌ CLIENT_ID oder CLIENT_SECRET fehlen in den Environment Variables!");
-}
+let accessToken = process.env.OAUTH2_ACCESS_TOKEN || null;
+let refreshToken = process.env.REFRESH_TOKEN || null;
 
 const client = new TwitterApi({
   clientId: process.env.CLIENT_ID,
@@ -17,125 +12,91 @@ const client = new TwitterApi({
   accessToken
 });
 
-const twitter = client.v2;
-
-// 🔹 Test-Endpoint für Environment Variables
-app.get("/test-env", (req, res) => {
-  res.json({
-    CLIENT_ID: process.env.CLIENT_ID,
-    CLIENT_SECRET: process.env.CLIENT_SECRET,
-    OAUTH2_ACCESS_TOKEN: accessToken,
-    REFRESH_TOKEN: refreshToken,
-    PORT: process.env.PORT
-  });
+/* 1) LOGIN → Weiterleitung zu Twitter */
+app.get("/login", (req, res) => {
+  const url = client.generateOAuth2AuthLink(
+    process.env.CALLBACK_URL,
+    { scope: ["tweet.read", "users.read", "like.read", "tweet.write", "offline.access"] }
+  );
+  res.redirect(url.url);
 });
 
-// 🔹 Funktion: Access Token automatisch erneuern
+/*2) CALLBACK → Token generieren */
+app.get("/callback", async (req, res) => {
+  const { code, state } = req.query;
+  if (!code) return res.send("❌ Kein Code erhalten!");
+
+  try {
+    const { client: loggedClient, accessToken: newAT, refreshToken: newRT } =
+      await client.loginWithOAuth2({ code, redirectUri: process.env.CALLBACK_URL });
+
+    accessToken = newAT;
+    refreshToken = newRT;
+
+    console.log("🔐 Access Token:", newAT);
+    console.log("♻ Refresh Token:", newRT);
+
+    return res.send(`
+      <h2>Login erfolgreich 🎉</h2>
+      <p>Token gespeichert – du kannst jetzt Likes abrufen.</p>
+    `);
+
+  } catch (e) {
+    console.log("❌ Fehler beim Login:", e);
+    res.send("❌ Fehler, kein Token erhalten.");
+  }
+});
+
+/* 3) Token Refresh */
 async function refreshAccessToken() {
-  try {
-    if (!refreshToken) throw new Error("Kein REFRESH_TOKEN gesetzt!");
-    const newTokens = await client.refreshOAuth2Token(refreshToken);
-    accessToken = newTokens.accessToken;
-    console.log("♻ Access Token erneuert:", accessToken);
-  } catch (err) {
-    console.error("❌ Fehler beim Token erneuern:", err);
-  }
+  if (!refreshToken) throw new Error("Kein REFRESH_TOKEN gesetzt!");
+
+  const t = await client.refreshOAuth2Token(refreshToken);
+  accessToken = t.accessToken;
+  refreshToken = t.refreshToken;
+  console.log("♻ Token erneuert:", accessToken);
 }
 
-// 🔹 Helper-Funktion für Requests mit Auto-Refresh
-async function safeRequest(fn) {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err.code === 401) { // Token abgelaufen
-      console.log("⚠ Token abgelaufen, erneuere...");
+/* 4) Safe API Call */
+async function safe(fn) {
+  try { return await fn(); }
+  catch (e) {
+    if (e.code === 401) {     // Token expired
       await refreshAccessToken();
-      return safeRequest(fn); // retry
+      return await fn();
     }
-    throw err;
+    throw e;
   }
 }
 
-// 🔹 Kombinierter Endpoint für Teilnehmer (Likes, Retweets, Replies)
+/* 5) Teilnehmer-Liste */
 app.get("/participants/:id", async (req, res) => {
   const tweetId = req.params.id;
-  const include = (req.query.include || "likes,retweets,replies").split(",");
+  const include = (req.query.include || "likes,replies").split(",");
   const response = {};
-  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   try {
-    // Likes
     if (include.includes("likes")) {
-      const data = await safeRequest(() => twitter.tweetLikedBy(tweetId, { max_results: 20 }));
-      let list = data.data || [];
-      let next = data.meta?.next_token;
-
-      while (next) {
-        await wait(500);
-        const nextPage = await safeRequest(() => twitter.tweetLikedBy(tweetId, { max_results: 20, pagination_token: next }));
-        list = list.concat(nextPage.data || []);
-        next = nextPage.meta?.next_token;
-      }
-      response.likes = list.map(u => u.username);
+      const data = await safe(() => client.v2.tweetLikedBy(tweetId, { max_results: 100 }));
+      response.likes = data.data?.map(u => u.username) ?? [];
     }
 
-    // Retweets
-    if (include.includes("retweets")) {
-      const data = await safeRequest(() => twitter.tweetRetweetedBy(tweetId, { max_results: 20 }));
-      let list = data.data || [];
-      let next = data.meta?.next_token;
-
-      while (next) {
-        await wait(500);
-        const nextPage = await safeRequest(() => twitter.tweetRetweetedBy(tweetId, { max_results: 20, pagination_token: next }));
-        list = list.concat(nextPage.data || []);
-        next = nextPage.meta?.next_token;
-      }
-      response.retweets = list.map(u => u.username);
-    }
-
-    // Replies
     if (include.includes("replies")) {
-      const data = await safeRequest(() => twitter.search(`conversation_id:${tweetId}`, {
-        "tweet.fields": ["author_id", "created_at"],
+      const data = await safe(() => client.v2.search(`conversation_id:${tweetId}`, {
         expansions: ["author_id"],
-        max_results: 20
+        "tweet.fields": ["author_id"], max_results: 100
       }));
-
-      let list = data.data || [];
-      let users = data.includes?.users || [];
-      let next = data.meta?.next_token;
-
-      while (next) {
-        await wait(500);
-        const nextPage = await safeRequest(() => twitter.search(`conversation_id:${tweetId}`, {
-          "tweet.fields": ["author_id", "created_at"],
-          expansions: ["author_id"],
-          max_results: 20,
-          next_token: next
-        }));
-        list = list.concat(nextPage.data || []);
-        users = users.concat(nextPage.includes?.users || []);
-        next = nextPage.meta?.next_token;
-      }
-
-      const userMap = {};
-      users.forEach(u => userMap[u.id] = u.username);
-      response.replies = list.map(t => userMap[t.author_id]).filter(Boolean);
+      response.replies = data.includes?.users?.map(u => u.username) ?? [];
     }
 
     res.json(response);
 
-  } catch (err) {
-    console.error("Error in /participants/:id:", err);
-    if (err.code === 429) {
-      res.status(429).json({ error: "Rate limit reached. Bitte später erneut versuchen." });
-    } else {
-      res.status(500).json({ error: err.message });
-    }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-// 🔹 Start Server
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Backend läuft auf Port ${PORT}`));
+app.listen(process.env.PORT || 10000, () =>
+  console.log("🚀 Backend läuft – Login unter /login")
+);
